@@ -2,12 +2,22 @@ import os
 import numpy as np
 import scipy.sparse
 
-import gurobipy as gp 
-from gurobipy import GRB
-
 import torch 
 import torch.nn as nn
 import torch.nn.functional as F
+
+import gurobipy as gp 
+from gurobipy import GRB
+
+def solve_lp(A, b, c):
+    m, n = A.shape
+    lp = gp.Model()
+    x_var = lp.addMVar(n, lb = 0.0, ub = 1.0, vtype = GRB.CONTINUOUS, name = 'x')
+    lp.setParam('OutputFlag', 0)
+    lp.addConstr(A @ x_var <= b)
+    lp.setObjective(c @ x_var, GRB.MAXIMIZE)
+    lp.optimize()
+    return x_var.x
 
 def generate_setcover(nrows=500, ncols=1000, density=0.05, filename=None, rng=np.random.RandomState(), max_coef=100):
     """
@@ -84,7 +94,9 @@ def generate_setcover(nrows=500, ncols=1000, density=0.05, filename=None, rng=np
 
     return A, b, c
 
-def setcover_encoding(A, b, c, x):
+
+
+def setcover_encoding(A, b, c, x, epsilon = 1e-6):
     dual_coef = b/b.max()
     slack = (b - A @ x)/b.max()
     obj_cos_sim = (A @ c) / (np.linalg.norm(A, ord = 2, axis = 1) * np.linalg.norm(c, ord = 2))
@@ -94,26 +106,23 @@ def setcover_encoding(A, b, c, x):
 
     coef = c / c.max()
     sol_val = x
-    V = torch.tensor(np.stack([coef, sol_val], axis = 1), dtype=torch.float)
+    lp_sol = solve_lp(A, b, c)
+    lp_sol_lb = np.abs(lp_sol - 0) < epsilon
+    lp_sol_ub = np.abs(lp_sol - 1) < epsilon
+    V = torch.tensor(np.stack([coef, sol_val, lp_sol, lp_sol_lb, lp_sol_ub], axis = 1), dtype=torch.float)
 
     E = torch.tensor(A, dtype=torch.float).float().unsqueeze(-1)
 
     return V, C, E
 
-def random_assignment(A, b, c):
-    m, n = A.shape
-    num_ones = np.random.randint(n + 1)
-    assignment = np.zeros_like(c, dtype = bool)
-    assignment[np.random.choice(n, size = num_ones, replace = False)] = True
-    return assignment
-
 if __name__ == "__main__":
-    A, b, c = generate_setcover(nrows=20, ncols=40, density=0.5)
-    x = np.ones_like(c, dtype = bool)
-    print(A, b, c)
-    print(A.shape, b.shape, c.shape)
+    A, b, c = generate_setcover(nrows=100, ncols=200, density=0.05)
+    x = np.zeros_like(c, dtype = bool)
+    # print(A, b, c)
+    # print(A.shape, b.shape, c.shape)
+    # print(solve_lp(A, b, c))
     V, C, E = setcover_encoding(A, b, c, x)
     print(V.shape, C.shape, E.shape)
-    print(V)
-    print(C)
-    print(E.squeeze(-1))
+    # print(V[:10])
+    # print(C[:10])
+    # print(E.squeeze(-1)[:10, :10])
